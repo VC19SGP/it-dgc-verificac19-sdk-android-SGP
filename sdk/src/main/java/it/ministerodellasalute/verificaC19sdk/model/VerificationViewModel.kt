@@ -137,7 +137,7 @@ class VerificationViewModel @Inject constructor(
             if (isDownloadInProgress()) {
                 throw VerificaDownloadInProgressException("un download della DRL è in esecuzione")
             }
-            decode(qrCodeText, fullModel)
+            decode(qrCodeText, fullModel, preferences.scanMode!!)
         }
     }
 
