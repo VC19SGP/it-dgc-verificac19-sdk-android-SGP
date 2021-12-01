@@ -81,6 +81,8 @@ interface Preferences {
 
     var maxRetryNumber: Int
 
+    var hasScanModeBeenChosen: Boolean
+
     /**
      *
      * This method clears all values from the Shared Preferences file.
@@ -182,6 +184,8 @@ class PreferencesImpl(context: Context) : Preferences {
     override var maxRetryNumber by IntPreference(preferences, PrefKeys.KEY_MAX_RETRY_NUM, 1)
 
     override var scanMode by StringPreference(preferences, PrefKeys.KEY_SCAN_MODE, "3G")
+
+    override var hasScanModeBeenChosen by BooleanPreference(preferences, KEY_SCAN_MODE_FLAG, false)
 
     override fun clear() {
         preferences.value.edit().clear().apply()
