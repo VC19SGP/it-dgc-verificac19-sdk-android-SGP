@@ -92,7 +92,6 @@ class VerificationViewModel @Inject constructor(
     private val _scanMode = MutableLiveData<String>()
     val scanMode: LiveData<String> = _scanMode
 
-
     /**
      *
      * This method gets the current status of the camera stored in the Shared Preferences.
@@ -221,13 +220,10 @@ class VerificationViewModel @Inject constructor(
                 certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
             } else if (blackListCheckResult == true) {
                 certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
-            }
-            else if (scanMode == "2G" && certificateModel.tests != null) {
+            } else if (scanMode == "2G" && certificateModel.tests != null) {
                 certificateSimple.certificateStatus = CertificateStatus.NOT_VALID
-            }
-            else if(fullModel == false) {
-                if (getCertificateStatus(certificateModel) == CertificateStatus.NOT_VALID_YET)
-                {
+            } else if (fullModel == false) {
+                if (getCertificateStatus(certificateModel) == CertificateStatus.NOT_VALID_YET) {
                     certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
                 }
             }
