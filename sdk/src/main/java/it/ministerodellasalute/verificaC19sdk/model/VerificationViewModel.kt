@@ -49,6 +49,7 @@ import it.ministerodellasalute.verificaC19sdk.data.VerifierRepository
 import it.ministerodellasalute.verificaC19sdk.data.VerifierRepositoryImpl.Companion.REALM_NAME
 import it.ministerodellasalute.verificaC19sdk.data.local.Preferences
 import it.ministerodellasalute.verificaC19sdk.data.local.RevokedPass
+import it.ministerodellasalute.verificaC19sdk.data.local.ScanMode
 import it.ministerodellasalute.verificaC19sdk.data.remote.model.Rule
 import it.ministerodellasalute.verificaC19sdk.di.DispatcherProvider
 import it.ministerodellasalute.verificaC19sdk.model.*
@@ -61,6 +62,8 @@ import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.util.*
 import javax.inject.Inject
+import java.security.cert.Certificate
+import java.security.cert.X509Certificate
 
 private const val TAG = "VerificationViewModel"
 
@@ -151,6 +154,7 @@ class VerificationViewModel @Inject constructor(
 
             var certificateIdentifier = ""
             var blackListCheckResult = false
+            var certificate: Certificate? = null
 
             withContext(dispatcherProvider.getIO()) {
                 val plainInput = prefixValidationService.decode(code, verificationResult)
@@ -177,14 +181,13 @@ class VerificationViewModel @Inject constructor(
                 schemaValidator.validate(coseData.cbor, verificationResult)
                 greenCertificate = cborService.decode(coseData.cbor, verificationResult)
 
-                val certificate = verifierRepository.getCertificate(kid.toBase64())
+                certificate = verifierRepository.getCertificate(kid.toBase64())
 
                 if (certificate == null) {
                     Log.d(TAG, "Verification failed: failed to load certificate")
                     return@withContext
                 }
-                cryptoService.validate(cose, certificate, verificationResult)
-
+                cryptoService.validate(cose, certificate as Certificate, verificationResult)
                 certificateIdentifier = extractUVCI(greenCertificate)
                 blackListCheckResult = verifierRepository.checkInBlackList(certificateIdentifier)
             }
@@ -195,10 +198,27 @@ class VerificationViewModel @Inject constructor(
                 isRevoked = isCertificateRevoked(certificateIdentifier.sha256())
                 this.scanMode = scanMode
                 this.certificateIdentifier = certificateIdentifier
+                this.certificate = certificate as X509Certificate
             }
+
             val status = getCertificateStatus(certificateModel).applyFullModel(fullModel)
             _certificate.value = certificateModel.toCertificateViewBean(status)
         }
+    }
+
+    private fun isRecoveryBis(
+        recoveryStatements: List<RecoveryModel>?,
+        cert: X509Certificate?
+    ): Boolean {
+        var isSuperRecovery: Boolean
+        recoveryStatements?.first()?.takeIf { it.countryOfVaccination == "IT" }
+            .let {
+                cert?.extendedKeyUsage?.find { keyUsage -> "1.3.6.1.4.1.0.1847.2021.1.3" == keyUsage }
+                    .run {
+                        isSuperRecovery = true
+                    }
+            }
+        return isSuperRecovery
     }
 
     /**
@@ -235,8 +255,22 @@ class VerificationViewModel @Inject constructor(
             }
     }
 
+    fun getRecoveryCertPVStartDay(): String {
+        return getValidationRules().find { it.name == ValidationRulesEnum.RECOVERY_CERT_PV_START_DAY.value }?.value
+            ?: run {
+                ""
+            }
+    }
+
     fun getRecoveryCertEndDay(): String {
         return getValidationRules().find { it.name == ValidationRulesEnum.RECOVERY_CERT_END_DAY.value }?.value
+            ?: run {
+                ""
+            }
+    }
+
+    fun getRecoveryCertPvEndDay(): String {
+        return getValidationRules().find { it.name == ValidationRulesEnum.RECOVERY_CERT_PV_END_DAY.value }?.value
             ?: run {
                 ""
             }
@@ -308,19 +342,20 @@ class VerificationViewModel @Inject constructor(
         if (cert.isRevoked) return CertificateStatus.REVOKED
         if (cert.certificateIdentifier.isEmpty()) return CertificateStatus.NOT_VALID
         if (cert.isBlackListed) return CertificateStatus.NOT_VALID
-        if (cert.scanMode == "2G" && cert.tests != null) return CertificateStatus.NOT_VALID
         if (!cert.isValid) {
             return if (cert.isCborDecoded) CertificateStatus.NOT_VALID else
                 CertificateStatus.NOT_EU_DCC
         }
         cert.recoveryStatements?.let {
-            return checkRecoveryStatements(it)
+            if (cert.scanMode == ScanMode.BOOSTER) return CertificateStatus.NOT_VALID
+            return checkRecoveryStatements(it, cert.certificate)
         }
         cert.tests?.let {
+            if (cert.scanMode == ScanMode.BOOSTER || cert.scanMode == ScanMode.STRENGTHENED) return CertificateStatus.NOT_VALID
             return checkTests(it)
         }
         cert.vaccinations?.let {
-            return checkVaccinations(it)
+            return checkVaccinations(it, cert.scanMode)
         }
         return CertificateStatus.NOT_VALID
     }
@@ -331,7 +366,10 @@ class VerificationViewModel @Inject constructor(
      * the proper status as [CertificateStatus].
      *
      */
-    private fun checkVaccinations(it: List<VaccinationModel>?): CertificateStatus {
+    private fun checkVaccinations(
+        it: List<VaccinationModel>?,
+        scanMode: String
+    ): CertificateStatus {
 
         // Check if vaccine is present in setting list; otherwise, return not valid
         val vaccineEndDayComplete = getVaccineEndDayComplete(it!!.last().medicinalProduct)
@@ -344,6 +382,7 @@ class VerificationViewModel @Inject constructor(
         try {
             when {
                 it.last().doseNumber < it.last().totalSeriesOfDoses -> {
+                    if (scanMode == ScanMode.BOOSTER) CertificateStatus.NOT_VALID
                     val startDate: LocalDate =
                         LocalDate.parse(clearExtraTime(it.last().dateOfVaccination))
                             .plusDays(
@@ -366,6 +405,7 @@ class VerificationViewModel @Inject constructor(
                     }
                 }
                 it.last().doseNumber >= it.last().totalSeriesOfDoses -> {
+                    if (scanMode == ScanMode.BOOSTER && it.last().doseNumber == it.last().totalSeriesOfDoses) return CertificateStatus.TEST_NEEDED
                     val startDate: LocalDate
                     val endDate: LocalDate
                     //j&j booster
@@ -463,11 +503,23 @@ class VerificationViewModel @Inject constructor(
      * returns the proper status as [CertificateStatus].
      *
      */
-    private fun checkRecoveryStatements(it: List<RecoveryModel>): CertificateStatus {
+    private fun checkRecoveryStatements(
+        it: List<RecoveryModel>,
+        certificate: X509Certificate?
+    ): CertificateStatus {
+        val isRecoveryBis = isRecoveryBis(
+            it,
+            certificate
+        )
+        val recoveryCertEndDay =
+            if (isRecoveryBis
+            ) getRecoveryCertPvEndDay() else getRecoveryCertEndDay()
+        val recoveryCertStartDay =
+            if (isRecoveryBis) getRecoveryCertPVStartDay() else getRecoveryCertStartDay()
         try {
             val startDate: LocalDate =
                 LocalDate.parse(clearExtraTime(it.last().certificateValidFrom)).plusDays(
-                    Integer.parseInt(getRecoveryCertStartDay())
+                    Integer.parseInt(recoveryCertStartDay)
                         .toLong()
                 )
 
@@ -480,7 +532,7 @@ class VerificationViewModel @Inject constructor(
                 LocalDate.now()
                     .isAfter(
                         startDate.plusDays(
-                            Integer.parseInt(getRecoveryCertEndDay())
+                            Integer.parseInt(recoveryCertEndDay)
                                 .toLong()
                         )
                     ) -> CertificateStatus.NOT_VALID
