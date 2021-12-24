@@ -22,7 +22,7 @@
 
 package it.ministerodellasalute.verificaC19sdk.model
 
-import java.security.cert.X509Certificate
+import java.lang.reflect.Constructor
 
 /**
  *
@@ -39,19 +39,14 @@ data class CertificateModel(
     val tests: List<TestModel>?,
     val recoveryStatements: List<RecoveryModel>?,
     val isValid: Boolean,
-    val isCborDecoded: Boolean,
-    var isRevoked: Boolean = false,
-    var isBlackListed: Boolean = false,
-    var scanMode: String = "",
-    var certificateIdentifier: String = "",
-    var certificate: X509Certificate? = null
+    val isCborDecoded: Boolean
 )
 
 data class PersonModel(
-    val standardisedFamilyName: String = "",
-    val familyName: String = "",
-    val standardisedGivenName: String = "",
-    val givenName: String = ""
+    val standardisedFamilyName: String,
+    val familyName: String?,
+    val standardisedGivenName: String?,
+    val givenName: String?
 )
 
 data class VaccinationModel(
