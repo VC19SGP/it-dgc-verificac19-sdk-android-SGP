@@ -65,8 +65,6 @@ import java.util.*
 import javax.inject.Inject
 import java.security.cert.Certificate
 import java.security.cert.X509Certificate
-import it.ministerodellasalute.verificaC19sdk.data.local.RevokedPass
-import it.ministerodellasalute.verificaC19sdk.util.Utility.sha256
 
 private const val TAG = "VerificationViewModel"
 
@@ -215,7 +213,7 @@ class VerificationViewModel @Inject constructor(
             simpleCert.dateOfBirth = certificateModel.dateOfBirth
 
             if (isCertificateRevoked(certificateIdentifier.sha256())) {
-                VerificaApplication.isCertificateRevoked = true
+                // VerificaSDKApplication.isCertificateRevoked = true
                 simpleCert.certificateStatus = CertificateStatus.NOT_VALID
             } else {
                 if (certificateIdentifier == "") {
@@ -376,6 +374,9 @@ class VerificationViewModel @Inject constructor(
      *
      */
     fun getCertificateStatus(cert: CertificateModel): CertificateStatus {
+        if (cert.isRevoked) return CertificateStatus.REVOKED
+        if (cert.certificateIdentifier.isEmpty()) return CertificateStatus.NOT_VALID
+        if (cert.isBlackListed) return CertificateStatus.NOT_VALID
         if (!cert.isValid) {
             return if (cert.isCborDecoded) {
                 CertificateStatus.NOT_VALID
@@ -391,7 +392,7 @@ class VerificationViewModel @Inject constructor(
             return checkTests(it)
         }
         cert.vaccinations?.let {
-            return checkVaccinations(it)
+            return checkVaccinations(it, cert.scanMode)
         }
         return CertificateStatus.NOT_VALID
     }
@@ -402,7 +403,10 @@ class VerificationViewModel @Inject constructor(
      * the proper status as [CertificateStatus].
      *
      */
-    private fun checkVaccinations(it: List<VaccinationModel>?): CertificateStatus {
+    private fun checkVaccinations(
+        it: List<VaccinationModel>?,
+        scanMode: String
+    ): CertificateStatus {
 
         // Check if vaccine is present in setting list; otherwise, return not valid
         val vaccineEndDayComplete = getVaccineEndDayComplete(it!!.last().medicinalProduct)
