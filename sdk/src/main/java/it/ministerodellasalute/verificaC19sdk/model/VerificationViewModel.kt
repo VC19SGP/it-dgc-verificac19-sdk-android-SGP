@@ -47,6 +47,7 @@ import it.ministerodellasalute.verificaC19sdk.VerificaDownloadInProgressExceptio
 import it.ministerodellasalute.verificaC19sdk.VerificaMinSDKVersionException
 import it.ministerodellasalute.verificaC19sdk.data.VerifierRepository
 import it.ministerodellasalute.verificaC19sdk.data.VerifierRepositoryImpl.Companion.REALM_NAME
+import it.ministerodellasalute.verificaC19sdk.data.local.MedicinalProduct
 import it.ministerodellasalute.verificaC19sdk.data.local.Preferences
 import it.ministerodellasalute.verificaC19sdk.data.local.RevokedPass
 import it.ministerodellasalute.verificaC19sdk.data.local.ScanMode
@@ -347,8 +348,7 @@ class VerificationViewModel @Inject constructor(
                 CertificateStatus.NOT_EU_DCC
         }
         cert.recoveryStatements?.let {
-            if (cert.scanMode == ScanMode.BOOSTER) return CertificateStatus.NOT_VALID
-            return checkRecoveryStatements(it, cert.certificate)
+            return checkRecoveryStatements(it, cert.certificate, cert.scanMode)
         }
         cert.tests?.let {
             if (cert.scanMode == ScanMode.BOOSTER || cert.scanMode == ScanMode.STRENGTHENED) return CertificateStatus.NOT_VALID
@@ -404,11 +404,10 @@ class VerificationViewModel @Inject constructor(
                     }
                 }
                 it.last().doseNumber >= it.last().totalSeriesOfDoses -> {
-                    if (scanMode == ScanMode.BOOSTER && it.last().doseNumber == it.last().totalSeriesOfDoses && it.last().doseNumber < 3) return CertificateStatus.TEST_NEEDED
                     val startDate: LocalDate
                     val endDate: LocalDate
                     //j&j booster
-                    if (it.last().medicinalProduct == "EU/1/20/1525" && it.last().doseNumber > it.last().totalSeriesOfDoses) {
+                    if (it.last().medicinalProduct == MedicinalProduct.JOHNSON && it.last().doseNumber > it.last().totalSeriesOfDoses) {
                         startDate = LocalDate.parse(clearExtraTime(it.last().dateOfVaccination))
 
                         endDate = LocalDate.parse(clearExtraTime(it.last().dateOfVaccination))
@@ -436,7 +435,20 @@ class VerificationViewModel @Inject constructor(
                         startDate.isAfter(LocalDate.now()) -> CertificateStatus.NOT_VALID_YET
                         LocalDate.now()
                             .isAfter(endDate) -> CertificateStatus.NOT_VALID
-                        else -> CertificateStatus.VALID
+                        else -> {
+                            when (scanMode) {
+                                ScanMode.BOOSTER -> {
+                                    if (it.last().medicinalProduct == MedicinalProduct.JOHNSON) {
+                                        if (it.last().doseNumber == it.last().totalSeriesOfDoses && it.last().doseNumber < 2) return CertificateStatus.TEST_NEEDED
+                                    } else {
+                                        if ((it.last().doseNumber == it.last().totalSeriesOfDoses && it.last().doseNumber < 3))
+                                            return CertificateStatus.TEST_NEEDED
+                                    }
+                                }
+                                else -> return CertificateStatus.VALID
+                            }
+                            return CertificateStatus.VALID
+                        }
                     }
                 }
                 else -> CertificateStatus.NOT_VALID
@@ -504,7 +516,8 @@ class VerificationViewModel @Inject constructor(
      */
     private fun checkRecoveryStatements(
         it: List<RecoveryModel>,
-        certificate: Certificate?
+        certificate: Certificate?,
+        scanMode: String
     ): CertificateStatus {
         val isRecoveryBis = isRecoveryBis(
             it,
@@ -535,7 +548,7 @@ class VerificationViewModel @Inject constructor(
                                 .toLong()
                         )
                     ) -> CertificateStatus.NOT_VALID
-                else -> CertificateStatus.VALID
+                else -> return if (scanMode == ScanMode.BOOSTER) CertificateStatus.TEST_NEEDED else CertificateStatus.VALID
             }
         } catch (e: Exception) {
             return CertificateStatus.NOT_VALID
